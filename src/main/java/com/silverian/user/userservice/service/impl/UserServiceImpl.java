@@ -5,6 +5,7 @@ import com.silverian.user.userservice.entity.Rating;
 import com.silverian.user.userservice.entity.User;
 import com.silverian.user.userservice.exceptions.ResourceNotFoundException;
 import com.silverian.user.userservice.external.service.HotelService;
+import com.silverian.user.userservice.external.service.RatingService;
 import com.silverian.user.userservice.repository.UserRepository;
 import com.silverian.user.userservice.service.UserService;
 import org.slf4j.Logger;
@@ -30,6 +31,8 @@ public class UserServiceImpl implements UserService {
     private RestTemplate restTemplate;
     @Autowired
     private HotelService hotelService;
+    @Autowired
+    private RatingService ratingService;
 
     private Logger logger = LoggerFactory.getLogger(UserServiceImpl.class);
 
@@ -40,48 +43,6 @@ public class UserServiceImpl implements UserService {
         user.setUserId(randomUserId);
         return userRepository.save(user);
     }
-
-
-
-    @Override
-    public List<User> getAllUser() {
-        List<User> users = userRepository.findAll();
-
-        users.forEach(user -> {
-            try {
-                // Fetch ratings for the user
-                Rating[] ratingsOfUser = restTemplate.getForObject(
-                        "http://RATING-SERVICE/ratings/user/" + user.getUserId(), Rating[].class);
-
-                if (ratingsOfUser != null) {
-                    // Convert ratings array to list
-                    List<Rating> ratings = Arrays.stream(ratingsOfUser).toList();
-
-                    // Fetch and set hotel details for each rating
-                    ratings.forEach(rating -> {
-                        try {
-                            String hotelUrl = "http://HOTEL-SERVICE/hotel/" + rating.getHotelId();
-                            ResponseEntity<Hotel> response = restTemplate.getForEntity(hotelUrl, Hotel.class);
-                            Hotel hotel = response.getBody();
-                            rating.setHotel(hotel);
-                        } catch (Exception e) {
-                            System.err.println("Failed to fetch hotel details for hotelId: " + rating.getHotelId() + " - " + e.getMessage());
-                        }
-                    });
-
-                    user.setRatings(ratings);
-                } else {
-                    user.setRatings(new ArrayList<>());
-                }
-            } catch (Exception e) {
-                System.err.println("Failed to fetch ratings for user: " + user.getUserId() + " - " + e.getMessage());
-                user.setRatings(new ArrayList<>());
-            }
-        });
-
-        return users;
-    }
-
 
     @Override
     public User updateUser(User user) {
@@ -106,65 +67,84 @@ public class UserServiceImpl implements UserService {
 
 
     @Override
+    public List<User> getAllUser() {
+        List<User> users = userRepository.findAll();
+
+        users.forEach(user -> {
+            try {
+                //using rest Template
+//                Rating[] ratingsOfUser = restTemplate.getForObject(
+//                        "http://RATING-SERVICE/ratings/user/" + user.getUserId(), Rating[].class);
+//
+//                assert ratingsOfUser != null;
+//                List<Rating> ratings = Arrays.stream(ratingsOfUser).toList();
+
+                // Using FeignClient
+                List<Rating> ratings = ratingService.getRatingOfUser(user.getUserId());
+
+                // Map ratings to include hotel information
+                List<Rating> ratingList = ratings.stream().map(rating -> {
+                    Hotel hotel = hotelService.getHotel(rating.getHotelId());
+                    rating.setHotel(hotel);
+                    return rating;
+                }).collect(Collectors.toList());
+
+                user.setRatings(ratingList);
+            } catch (Exception e) {
+                // Log the error and set an empty list of ratings for the user
+                System.err.println("Failed to fetch ratings for user: " + user.getUserId() + " - " + e.getMessage());
+                user.setRatings(new ArrayList<>());
+            }
+        });
+        return users;
+    }
+
+
+    @Override
     public User getUser(String userId) {
         User user = userRepository.findById(userId).orElseThrow(() -> new ResourceNotFoundException("User with ID " + userId + " not found."));
 
         //fetch rating of the above user from RATING SERVICE
-        Rating[] ratingsOfUsers = restTemplate.getForObject("http://RATING-SERVICE/ratings/user/" + user.getUserId(), Rating[].class);
-
-        assert ratingsOfUsers != null;
-        List<Rating> ratings = Arrays.stream(ratingsOfUsers).toList();
+        // Using FeignClient
+        List<Rating> ratings = ratingService.getRatingOfUser(user.getUserId());
 
         List<Rating> ratingList = ratings.stream().map(rating -> {
-//            ResponseEntity<Hotel> forEntity = restTemplate.getForEntity("http://HOTEL-SERVICE/hotel/" + rating.getHotelId(), Hotel.class);
-//            Hotel hotel = forEntity.getBody();
             Hotel hotel = hotelService.getHotel(rating.getHotelId());
 
             rating.setHotel(hotel);
             return rating;
         }).collect(Collectors.toList());
-
         user.setRatings(ratingList);
-
-//        logger.info(""+ratings);
-
         return user;
     }
 
+//
+//    @Override
+//    public User getUser(String userId) {
+//        User user = userRepository.findById(userId).orElseThrow(() -> new ResourceNotFoundException("User with ID " + userId + " not found."));
+//
+//        //fetch rating of the above user from RATING SERVICE
+//        Rating[] ratingsOfUsers = restTemplate.getForObject("http://RATING-SERVICE/ratings/user/" + user.getUserId(), Rating[].class);
+//
+//
+//        List<Rating> ratings = Arrays.stream(ratingsOfUsers).toList();
+//
+//        List<Rating> ratingList = ratings.stream().map(rating -> {
+//            ResponseEntity<Hotel> forEntity = restTemplate.getForEntity("http://HOTEL-SERVICE/hotel/" + rating.getHotelId(), Hotel.class);
+//            Hotel hotel = forEntity.getBody();
+////            Hotel hotel = hotelService.getHotel(rating.getHotelId());
+//
+//            rating.setHotel(hotel);
+//            return rating;
+//        }).collect(Collectors.toList());
+//
+//        user.setRatings(ratingList);
+//
+////        logger.info(""+ratings);
+//
+//        return user;
+//    }
+
+
 
 }
-
-//@Override
-//public List<User> getAllUser() {
-//    List<User> users = userRepository.findAll();
-//
-//    users.forEach(user -> {
-//        try {
-//            Rating [] ratingsOfUser = restTemplate.getForObject(
-//                    "http://RATING-SERVICE/ratings/user/" + user.getUserId(), Rating[].class);
-//
-//            assert ratingsOfUser != null;
-//            List<Rating> ratings = Arrays.stream(ratingsOfUser).toList();
-//
-//            // Map ratings to include hotel information
-//
-//            List<Rating> ratingList = ratings.stream().peek(rating -> {
-//                String hotelUrl = "http://HOTEL-SERVICE/hotel/" + rating.getHotelId();
-//                ResponseEntity<Hotel> forEntity = restTemplate.getForEntity(hotelUrl, Hotel.class);
-//                Hotel hotel = forEntity.getBody();
-//
-//                rating.setHotel(hotel);
-//
-//            }).collect(Collectors.toList());
-//
-//            user.setRatings(ratings);
-//        } catch (Exception e) {
-//            // Log the error and set an empty list of ratings for the user
-//            System.err.println("Failed to fetch ratings for user: " + user.getUserId() + " - " + e.getMessage());
-//            user.setRatings(new ArrayList<>());
-//        }
-//    });
-//
-//
-//    return users;
-//}
